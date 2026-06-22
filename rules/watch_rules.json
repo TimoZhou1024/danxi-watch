@@ -1,0 +1,38 @@
+[
+  {
+    "name": "考试与成绩",
+    "description": "关注考试、补考、绩点、成绩相关讨论。",
+    "severity": "normal",
+    "include_keywords": ["考试", "期中", "期末", "补考", "挂科", "绩点", "成绩"],
+    "exclude_keywords": ["收资料", "出资料", "资料dd", "dd资料"],
+    "include_regex": [],
+    "exclude_regex": [],
+    "min_reply": 0,
+    "min_view": 0,
+    "min_like": 0
+  },
+  {
+    "name": "失物招领",
+    "description": "关注丢失或捡到物品的信息。",
+    "severity": "normal",
+    "include_keywords": ["丢了", "遗失", "捡到", "失物", "一卡通", "耳机", "钥匙"],
+    "exclude_keywords": [],
+    "include_regex": [],
+    "exclude_regex": [],
+    "min_reply": 0,
+    "min_view": 0,
+    "min_like": 0
+  },
+  {
+    "name": "高互动讨论",
+    "description": "关注回复较多、可能需要人工查看的讨论。",
+    "severity": "medium",
+    "include_keywords": [],
+    "exclude_keywords": ["收资料", "出资料", "代课", "代刷"],
+    "include_regex": [],
+    "exclude_regex": [],
+    "min_reply": 15,
+    "min_view": 0,
+    "min_like": 0
+  }
+]

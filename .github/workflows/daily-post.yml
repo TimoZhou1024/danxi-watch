@@ -1,0 +1,66 @@
+name: DanXi Watch Dry Run
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: danxi-watch-dry-run
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate reports
+        env:
+          TZ: Asia/Shanghai
+          DANXI_API_TOKEN: ${{ secrets.DANXI_API_TOKEN }}
+          DANXI_WEBVPN_USERNAME: ${{ secrets.DANXI_WEBVPN_USERNAME }}
+          DANXI_WEBVPN_PASSWORD: ${{ secrets.DANXI_WEBVPN_PASSWORD }}
+          DANXI_ARCHIVE_OUTPUTS: "false"
+        run: |
+          if [ -z "$DANXI_WEBVPN_USERNAME" ] || [ -z "$DANXI_WEBVPN_PASSWORD" ]; then
+            echo "::error::Missing required secrets: DANXI_WEBVPN_USERNAME or DANXI_WEBVPN_PASSWORD"
+            exit 1
+          fi
+
+          python scripts/generate_daily.py \
+            --hours 24 \
+            --top 12 \
+            --base-urls "https://forum.fduhole.com/api" \
+            --webvpn-mode force \
+            --webvpn-no-prompt \
+            --no-archive-outputs \
+            --verbose
+
+      - name: Upload generated artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: danxi-watch-report
+          path: |
+            outputs/daily.md
+            outputs/ranked.json
+            outputs/holes.raw.json
+            outputs/detections.md
+            outputs/detections.json
+          if-no-files-found: warn
