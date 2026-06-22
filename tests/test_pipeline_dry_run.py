@@ -139,21 +139,25 @@ class PipelineDryRunTests(unittest.TestCase):
         page1 = [_fake_hole(1000 + idx) for idx in range(10)]
         page2 = [_fake_hole(2000 + idx) for idx in range(10)]
         page3 = [_fake_hole(3000 + idx) for idx in range(3)]
-        call_offsets: list[int | None] = []
+        for idx, hole in enumerate(page1):
+            hole["time_updated"] = f"2026-01-03T03:{idx:02d}:00Z"
+        for idx, hole in enumerate(page2):
+            hole["time_updated"] = f"2026-01-03T02:{idx:02d}:00Z"
+        for idx, hole in enumerate(page3):
+            hole["time_updated"] = f"2026-01-03T01:{idx:02d}:00Z"
+        call_offsets: list[int | str | None] = []
         call_limits: list[int] = []
+        pages = [page1, page2, page3, []]
+        call_index = {"value": 0}
 
         def _side_effect(*_args, **kwargs):
             offset = kwargs.get("offset")
             limit = kwargs.get("limit")
             call_offsets.append(offset)
             call_limits.append(limit)
-            if offset == 0:
-                return page1, "https://forum.fduhole.com/api"
-            if offset == 10:
-                return page2, "https://forum.fduhole.com/api"
-            if offset == 20:
-                return page3, "https://forum.fduhole.com/api"
-            return [], "https://forum.fduhole.com/api"
+            idx = call_index["value"]
+            call_index["value"] += 1
+            return pages[min(idx, len(pages) - 1)], "https://forum.fduhole.com/api"
 
         mock_fetch_holes.side_effect = _side_effect
 
@@ -171,22 +175,21 @@ class PipelineDryRunTests(unittest.TestCase):
             )
             result = run_pipeline(config)
 
-        self.assertIn(0, call_offsets)
-        self.assertIn(10, call_offsets)
-        self.assertIn(20, call_offsets)
+        self.assertGreaterEqual(len(call_offsets), 3)
+        self.assertTrue(all(isinstance(offset, str) for offset in call_offsets[:3]))
         self.assertTrue(all(limit <= 10 for limit in call_limits))
         self.assertGreaterEqual(result["fetched"], 23)
 
     @patch("danxi_daily.pipeline.fetch_hole_floors", return_value=[])
     @patch("danxi_daily.pipeline.fetch_holes_with_fallback")
-    def test_pipeline_does_not_expand_length_when_offset_is_ignored(
+    def test_pipeline_does_not_expand_length_when_time_cursor_repeats(
         self,
         mock_fetch_holes,
         _mock_fetch_floors,
     ) -> None:
         page = [_fake_hole(5000 + idx) for idx in range(10)]
         call_limits: list[int] = []
-        call_offsets: list[int | None] = []
+        call_offsets: list[int | str | None] = []
 
         def _side_effect(*_args, **kwargs):
             call_limits.append(kwargs.get("limit"))
@@ -211,7 +214,8 @@ class PipelineDryRunTests(unittest.TestCase):
 
         self.assertEqual(result["fetched"], 10)
         self.assertTrue(all(limit <= 10 for limit in call_limits))
-        self.assertEqual(call_offsets[:2], [0, 10])
+        self.assertGreaterEqual(len(call_offsets), 2)
+        self.assertTrue(all(isinstance(offset, str) for offset in call_offsets[:2]))
 
     @patch("danxi_daily.pipeline.fetch_hole_floors", return_value=[])
     @patch("danxi_daily.pipeline.fetch_holes_with_fallback", side_effect=RuntimeError("network down"))

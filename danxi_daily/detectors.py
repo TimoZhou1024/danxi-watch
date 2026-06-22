@@ -15,6 +15,8 @@ class WatchRule:
     name: str
     include_keywords: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
+    include_tags: list[str] = field(default_factory=list)
+    exclude_tags: list[str] = field(default_factory=list)
     include_regex: list[str] = field(default_factory=list)
     exclude_regex: list[str] = field(default_factory=list)
     min_reply: int = 0
@@ -36,6 +38,8 @@ class DetectionResult:
     view: int
     like_sum: int
     matched_keywords: list[str]
+    matched_tags: list[str]
+    matched_regex: list[str]
     excerpt: str
     source_endpoint: str
 
@@ -65,6 +69,8 @@ def load_watch_rules(path: Path) -> list[WatchRule]:
                 name=name,
                 include_keywords=_string_list(item.get("include_keywords")),
                 exclude_keywords=_string_list(item.get("exclude_keywords")),
+                include_tags=_string_list(item.get("include_tags")),
+                exclude_tags=_string_list(item.get("exclude_tags")),
                 include_regex=_string_list(item.get("include_regex")),
                 exclude_regex=_string_list(item.get("exclude_regex")),
                 min_reply=max(0, parse_int(item.get("min_reply"), default=0)),
@@ -101,6 +107,8 @@ def detect_holes(
         like_sum = _sum_floor_likes(floors)
         text = _collect_text(hole, floors)
         normalized_text = text.lower()
+        tags = _collect_tags(hole)
+        normalized_tags = [tag.lower() for tag in tags]
 
         for rule in rules:
             if counts.get(rule.name, 0) >= max(1, max_per_rule):
@@ -108,9 +116,15 @@ def detect_holes(
             matched = _matched_keywords(normalized_text, rule.include_keywords)
             if rule.include_keywords and not matched:
                 continue
-            if rule.include_regex and not _matches_any_regex(text, rule.include_regex):
+            matched_tags = _matched_tags(normalized_tags, tags, rule.include_tags)
+            if rule.include_tags and not matched_tags:
+                continue
+            matched_regex = _matched_regex(text, rule.include_regex)
+            if rule.include_regex and not matched_regex:
                 continue
             if _matched_keywords(normalized_text, rule.exclude_keywords):
+                continue
+            if _matched_tags(normalized_tags, tags, rule.exclude_tags):
                 continue
             if rule.exclude_regex and _matches_any_regex(text, rule.exclude_regex):
                 continue
@@ -129,6 +143,8 @@ def detect_holes(
                     view=view,
                     like_sum=like_sum,
                     matched_keywords=matched,
+                    matched_tags=matched_tags,
+                    matched_regex=matched_regex,
                     excerpt=_excerpt(text),
                     source_endpoint=source_endpoint,
                 )
@@ -180,6 +196,21 @@ def _collect_text(hole: dict[str, Any], floors: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
+def _collect_tags(hole: dict[str, Any]) -> list[str]:
+    tags = hole.get("tags")
+    if not isinstance(tags, list):
+        return []
+
+    result: list[str] = []
+    for tag in tags:
+        if not isinstance(tag, dict):
+            continue
+        name = tag.get("name")
+        if isinstance(name, str) and name.strip():
+            result.append(name.strip())
+    return result
+
+
 def _matched_keywords(normalized_text: str, keywords: list[str]) -> list[str]:
     matched: list[str] = []
     for keyword in keywords:
@@ -189,14 +220,42 @@ def _matched_keywords(normalized_text: str, keywords: list[str]) -> list[str]:
     return matched
 
 
+def _matched_tags(normalized_tags: list[str], tags: list[str], expected: list[str]) -> list[str]:
+    matched: list[str] = []
+    for expected_tag in expected:
+        normalized_expected = expected_tag.lower()
+        if not normalized_expected:
+            continue
+        for normalized_tag, original_tag in zip(normalized_tags, tags):
+            if normalized_expected in normalized_tag:
+                matched.append(original_tag)
+                break
+    return matched
+
+
 def _matches_any_regex(text: str, patterns: list[str]) -> bool:
+    return bool(_matched_regex(text, patterns))
+
+
+def _matched_regex(text: str, patterns: list[str]) -> list[str]:
+    matched: list[str] = []
+    seen: set[str] = set()
     for pattern in patterns:
         try:
-            if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
-                return True
+            result = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
         except re.error:
             continue
-    return False
+        if result is None:
+            continue
+        value = result.group(0).strip()
+        if not value:
+            value = pattern
+        if len(value) > 24:
+            value = value[:21].rstrip() + "..."
+        if value not in seen:
+            matched.append(value)
+            seen.add(value)
+    return matched
 
 
 def _excerpt(text: str, max_chars: int = 140) -> str:

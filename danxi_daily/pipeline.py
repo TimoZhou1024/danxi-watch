@@ -250,8 +250,9 @@ def _fetch_hot_candidates(config: PipelineConfig) -> tuple[list[dict[str, Any]],
     start_time = _effective_start_time(config.hours)
     # /api/holes currently accepts up to 10 items per request.
     page_size = max(1, min(config.fetch_limit, 10))
-    use_time_offset = bool(config.force_webvpn)
-    offset: int | str | None = (_webvpn_start_cursor() if use_time_offset else 0)
+    # Current /holes API uses a local wall-clock time cursor for both direct and WebVPN paths.
+    use_time_offset = True
+    offset: int | str | None = _webvpn_start_cursor()
     previous_cursor: str | None = None
     max_pages = max(1, config.fetch_max_pages)
     retry_per_page = max(1, config.fetch_retry_per_page)

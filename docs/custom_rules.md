@@ -14,6 +14,8 @@ outputs:
 - `severity`: `low`, `normal`, `medium`, `high`, or `critical`.
 - `include_keywords`: Any keyword here can trigger the rule.
 - `exclude_keywords`: If any keyword here appears, the rule is skipped.
+- `include_tags`: Optional DanXi tag names. If present, at least one matching tag is required.
+- `exclude_tags`: Optional DanXi tag names. If any matching tag appears, the rule is skipped.
 - `include_regex`: Optional regular expressions. If present, at least one must match.
 - `exclude_regex`: Optional regular expressions. If any matches, the rule is skipped.
 - `min_reply`: Minimum reply count.

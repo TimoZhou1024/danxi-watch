@@ -20,6 +20,7 @@ def _hole(hole_id: int, content: str, reply: int = 1, view: int = 10) -> dict:
         "content": content,
         "view": view,
         "reply": reply,
+        "tags": [],
         "time_created": now_utc,
         "time_updated": now_utc,
         "floors": {
@@ -64,11 +65,60 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(results[0].hole_id, 1)
         self.assertEqual(results[0].matched_keywords, ["考试"])
 
+    def test_detect_holes_reports_regex_match_preview(self) -> None:
+        rule_payload = [
+            {
+                "name": "失物招领",
+                "include_regex": ["(丢了|捡到|拿错)"],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as td:
+            rules_path = Path(td) / "rules.json"
+            rules_path.write_text(json.dumps(rule_payload, ensure_ascii=False), encoding="utf-8")
+            rules = load_watch_rules(rules_path)
+            results = detect_holes(
+                [_hole(20, "我的伞丢了")],
+                rules,
+                source_endpoint="https://forum.fduhole.com/api",
+            )
+
+        self.assertEqual(results[0].matched_regex, ["丢了"])
+
     def test_build_detections_markdown_empty_case(self) -> None:
         text = build_detections_markdown([])
 
         self.assertIn("命中结果", text)
         self.assertIn("没有命中", text)
+
+    def test_detect_holes_can_require_and_exclude_tags(self) -> None:
+        rule_payload = [
+            {
+                "name": "标签规则",
+                "include_tags": ["学习"],
+                "exclude_tags": ["roll"],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as td:
+            rules_path = Path(td) / "rules.json"
+            rules_path.write_text(json.dumps(rule_payload, ensure_ascii=False), encoding="utf-8")
+            rules = load_watch_rules(rules_path)
+
+            matched = _hole(10, "普通内容")
+            matched["tags"] = [{"name": "学习"}]
+            excluded = _hole(11, "普通内容")
+            excluded["tags"] = [{"name": "学习"}, {"name": "roll"}]
+
+            results = detect_holes(
+                [matched, excluded],
+                rules,
+                source_endpoint="https://forum.fduhole.com/api",
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].hole_id, 10)
+        self.assertEqual(results[0].matched_tags, ["学习"])
 
     @patch("danxi_daily.pipeline.fetch_hole_floors", return_value=[])
     @patch("danxi_daily.pipeline.fetch_holes_with_fallback")

@@ -17,7 +17,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         )
 
 
-_SAFE_OPENER = urllib.request.build_opener(_NoRedirect())
+_SAFE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
 
 def post_markdown(

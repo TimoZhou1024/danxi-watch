@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 
 from .detectors import DetectionResult
@@ -64,13 +65,25 @@ def build_detections_markdown(
         lines.append("当前规则没有命中内容。")
         return "\n".join(lines) + "\n"
 
+    counts = Counter(item.rule for item in detections)
+    summary = "；".join(f"{rule} {count}" for rule, count in counts.items())
+    lines.extend([
+        f"规则命中统计：{summary}",
+        "",
+    ])
+
     current_rule = ""
     for item in detections:
         if item.rule != current_rule:
             current_rule = item.rule
             lines.extend(["", f"### {current_rule}", ""])
 
-        keyword_text = "、".join(item.matched_keywords) if item.matched_keywords else "规则阈值"
+        matches = (
+            item.matched_keywords
+            + [f"标签:{tag}" for tag in item.matched_tags]
+            + [f"正则:{value}" for value in item.matched_regex]
+        )
+        keyword_text = "、".join(matches) if matches else "规则阈值"
         lines.append(
             f"- #{item.hole_id} [{item.severity}] "
             f"命中：{keyword_text} "
