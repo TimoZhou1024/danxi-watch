@@ -7,3 +7,7 @@ outputs/*.json
 outputs/*.md
 outputs/history/
 !outputs/.gitkeep
+data/
+exports/
+web/node_modules/
+web/dist/

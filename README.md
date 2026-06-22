@@ -46,6 +46,17 @@ Custom rules live in `rules/watch_rules.json`. See
 4. Add notification or posting only after dry-run output is stable.
 5. Push to GitHub and enable Actions.
 
+## Archive Viewer
+
+This project now includes a local archive and viewer path:
+
+- Archive to SQLite: `python scripts\archive_danxi.py --hours 24 --base-urls "https://forum.fduhole.com/api"`
+- Serve local API: `python scripts\serve_archive.py --db data\danxi.sqlite --image-root data\images`
+- Run frontend: `cd web && npm install && npm run dev`
+- Export Pages data: `python scripts\export_pages_data.py --db data\danxi.sqlite --out exports\danxi-export.zip`
+
+See `docs/archive_viewer.md` for details.
+
 ---
 
 Original upstream README content follows for reference.
