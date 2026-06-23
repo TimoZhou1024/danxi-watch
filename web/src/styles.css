@@ -262,7 +262,8 @@ select {
   font-size: 22px;
 }
 
-.detail p {
+.detail p,
+.floor-text {
   margin: 0;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -313,6 +314,44 @@ select {
 .floor-head {
   margin-bottom: 6px;
   flex-wrap: wrap;
+}
+
+.content-notice {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 0 0 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #9a4f00;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.floor-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.floor-text.muted {
+  color: #68717d;
+}
+
+.inline-image {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.inline-image img {
+  display: block;
+  max-width: min(100%, 560px);
+  max-height: 680px;
+  border: 1px solid #dde1e7;
+  border-radius: 8px;
+  object-fit: contain;
+  background: #f8fafc;
 }
 
 .spin {

@@ -239,12 +239,19 @@ def get_hole_detail(db_path: Path, hole_id: int) -> dict[str, Any] | None:
             """,
             (hole_id,),
         ).fetchall()
+        image_payloads = [image_row_to_dict(row) for row in images]
+        images_by_floor: dict[int, list[dict[str, Any]]] = {}
+        for image in image_payloads:
+            floor_id = image.get("floor_id")
+            if floor_id is None:
+                continue
+            images_by_floor.setdefault(int(floor_id), []).append(image)
         return {
             "hole": hole_row_to_summary(hole),
             "raw": json.loads(hole["raw_json"]),
-            "floors": [floor_row_to_dict(row) for row in floors],
+            "floors": [floor_row_to_dict(row, images_by_floor.get(int(row["floor_id"]), [])) for row in floors],
             "tags": [dict(row) for row in tags],
-            "images": [image_row_to_dict(row) for row in images],
+            "images": image_payloads,
         }
     finally:
         conn.close()
@@ -274,7 +281,12 @@ def hole_row_to_summary(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def floor_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def floor_row_to_dict(row: sqlite3.Row, images: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    keys = set(row.keys())
+    latest_content = row["latest_content"] if "latest_content" in keys else row["content"]
+    preserved_content = row["preserved_content"] if "preserved_content" in keys else None
+    content_status = row["content_status"] if "content_status" in keys else "normal"
+    content_notice = row["content_notice"] if "content_notice" in keys else None
     return {
         "floor_id": row["floor_id"],
         "hole_id": row["hole_id"],
@@ -282,11 +294,16 @@ def floor_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "reply_to": row["reply_to"],
         "anonyname": row["anonyname"],
         "content": row["content"],
+        "latest_content": latest_content,
+        "preserved_content": preserved_content,
+        "content_status": content_status,
+        "content_notice": content_notice,
         "time_created": row["time_created"],
         "time_updated": row["time_updated"],
         "deleted": bool(row["deleted"]),
         "like": row["like_count"],
         "dislike": row["dislike_count"],
+        "images": images or [],
     }
 
 

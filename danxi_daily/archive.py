@@ -21,6 +21,13 @@ from .utils import ensure_parent, parse_int, parse_iso8601
 
 
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+DELETED_NOTICE_EXACT = {
+    "该内容已被作者删除",
+    "该内容被作者删除",
+    "该内容因色情低俗被删除",
+    "该内容因违反社区规范被删除",
+    "该内容正在审核中",
+}
 ALLOWED_IMAGE_HOSTS = {"image.fduhole.com"}
 NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -84,6 +91,7 @@ def init_archive_db(conn: sqlite3.Connection) -> None:
             ai_summary_available INTEGER DEFAULT 0,
             search_text TEXT DEFAULT '',
             raw_json TEXT NOT NULL,
+            preserved_raw_json TEXT,
             first_seen_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL
         );
@@ -95,12 +103,17 @@ def init_archive_db(conn: sqlite3.Connection) -> None:
             reply_to INTEGER,
             anonyname TEXT,
             content TEXT,
+            latest_content TEXT,
+            preserved_content TEXT,
+            content_status TEXT DEFAULT 'normal',
+            content_notice TEXT,
             time_created TEXT,
             time_updated TEXT,
             deleted INTEGER DEFAULT 0,
             like_count INTEGER DEFAULT 0,
             dislike_count INTEGER DEFAULT 0,
             raw_json TEXT NOT NULL,
+            preserved_raw_json TEXT,
             first_seen_at TEXT NOT NULL,
             last_seen_at TEXT NOT NULL,
             FOREIGN KEY (hole_id) REFERENCES holes(hole_id) ON DELETE CASCADE
@@ -161,7 +174,83 @@ def init_archive_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_images_status ON images(status);
         """
     )
+    migrate_archive_db(conn)
     conn.commit()
+
+
+def migrate_archive_db(conn: sqlite3.Connection) -> None:
+    holes_raw_added = ensure_column(conn, "holes", "preserved_raw_json", "TEXT")
+    floor_schema_changed = any(
+        [
+            ensure_column(conn, "floors", "latest_content", "TEXT"),
+            ensure_column(conn, "floors", "preserved_content", "TEXT"),
+            ensure_column(conn, "floors", "content_status", "TEXT DEFAULT 'normal'"),
+            ensure_column(conn, "floors", "content_notice", "TEXT"),
+            ensure_column(conn, "floors", "preserved_raw_json", "TEXT"),
+        ]
+    )
+    if holes_raw_added:
+        conn.execute("UPDATE holes SET preserved_raw_json = raw_json WHERE preserved_raw_json IS NULL")
+    if not floor_schema_changed:
+        return
+
+    rows = conn.execute(
+        """
+        SELECT floor_id, content, latest_content, preserved_content, content_status,
+               content_notice, deleted, raw_json, preserved_raw_json
+        FROM floors
+        """
+    ).fetchall()
+    for row in rows:
+        content = row["content"]
+        latest_content = row["latest_content"] if row["latest_content"] is not None else content
+        preserved_content = stored_preserved_content(row)
+        status = row["content_status"] or "normal"
+        notice = row["content_notice"]
+        deleted = int(row["deleted"] or 0)
+
+        if is_deleted_placeholder(latest_content):
+            status = "deleted_notice"
+            notice = latest_content
+            deleted = 1
+        elif status == "deleted_notice" and not is_deleted_placeholder(latest_content):
+            status = "normal"
+            notice = None
+
+        display_content = content
+        if is_deleted_placeholder(display_content) and preserved_content:
+            display_content = preserved_content
+
+        preserved_raw_json = row["preserved_raw_json"]
+        if preserved_content and preserved_raw_json is None:
+            preserved_raw_json = row["raw_json"]
+
+        conn.execute(
+            """
+            UPDATE floors
+            SET content=?, latest_content=?, preserved_content=?, content_status=?,
+                content_notice=?, deleted=?, preserved_raw_json=?
+            WHERE floor_id=?
+            """,
+            (
+                display_content,
+                latest_content,
+                preserved_content,
+                status,
+                notice,
+                deleted,
+                preserved_raw_json,
+                row["floor_id"],
+            ),
+        )
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> bool:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        return True
+    return False
 
 
 def run_archive(config: ArchiveConfig) -> dict[str, Any]:
@@ -263,6 +352,7 @@ def store_holes(
             for url in extract_image_urls(str(floor.get("content") or "")):
                 if is_allowed_image_url(url):
                     upsert_image_ref(conn, url, hole_id, floor_id, now)
+        refresh_hole_search_text(conn, hole_id)
 
     if config.download_images:
         downloaded, failed = download_pending_images(
@@ -333,17 +423,25 @@ def page_time_cursor(holes: list[dict[str, Any]]) -> str | None:
 def upsert_hole(conn: sqlite3.Connection, hole: dict[str, Any], now: str) -> None:
     hole_id = normalize_hole_id(hole)
     floors = _floors_from_hole(hole)
-    search_text = build_search_text(hole, floors)
-    existing = conn.execute("SELECT first_seen_at FROM holes WHERE hole_id = ?", (hole_id,)).fetchone()
+    search_text = build_search_text_for_upsert(conn, hole_id, hole, floors)
+    existing = conn.execute(
+        "SELECT first_seen_at, raw_json, preserved_raw_json FROM holes WHERE hole_id = ?",
+        (hole_id,),
+    ).fetchone()
     first_seen = existing["first_seen_at"] if existing else now
+    raw_json = json.dumps(hole, ensure_ascii=False, sort_keys=True)
+    has_preservable_floor_content = hole_has_preservable_floor_content(floors)
+    preserved_raw_json = raw_json if has_preservable_floor_content else None
+    if existing and not has_preservable_floor_content:
+        preserved_raw_json = existing["preserved_raw_json"] or existing["raw_json"]
     conn.execute(
         """
         INSERT INTO holes (
             hole_id, division_id, time_created, time_updated, time_deleted, view_count,
             reply_count, favorite_count, subscription_count, hidden, locked, good,
-            frozen, no_purge, ai_summary_available, search_text, raw_json,
+            frozen, no_purge, ai_summary_available, search_text, raw_json, preserved_raw_json,
             first_seen_at, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(hole_id) DO UPDATE SET
             division_id=excluded.division_id,
             time_created=excluded.time_created,
@@ -361,6 +459,7 @@ def upsert_hole(conn: sqlite3.Connection, hole: dict[str, Any], now: str) -> Non
             ai_summary_available=excluded.ai_summary_available,
             search_text=excluded.search_text,
             raw_json=excluded.raw_json,
+            preserved_raw_json=excluded.preserved_raw_json,
             last_seen_at=excluded.last_seen_at
         """,
         (
@@ -380,7 +479,8 @@ def upsert_hole(conn: sqlite3.Connection, hole: dict[str, Any], now: str) -> Non
             int(bool(hole.get("no_purge"))),
             int(bool(hole.get("ai_summary_available"))),
             search_text,
-            json.dumps(hole, ensure_ascii=False, sort_keys=True),
+            raw_json,
+            preserved_raw_json,
             first_seen,
             now,
         ),
@@ -392,27 +492,65 @@ def upsert_floor(conn: sqlite3.Connection, hole_id: int, floor: dict[str, Any], 
     floor_id = parse_int(floor.get("floor_id") or floor.get("id"), -1)
     if floor_id < 0:
         return
-    existing = conn.execute("SELECT first_seen_at FROM floors WHERE floor_id = ?", (floor_id,)).fetchone()
+    existing = conn.execute("SELECT * FROM floors WHERE floor_id = ?", (floor_id,)).fetchone()
     first_seen = existing["first_seen_at"] if existing else now
+    incoming_content = floor.get("content")
+    incoming_text = str(incoming_content) if incoming_content is not None else None
+    incoming_is_notice = is_deleted_placeholder(incoming_text)
+    existing_preserved_content = stored_preserved_content(existing) if existing else None
+    existing_preserved_raw = None
+    if existing:
+        existing_preserved_raw = existing["preserved_raw_json"] or existing["raw_json"]
+
+    raw_json = json.dumps(floor, ensure_ascii=False, sort_keys=True)
+    if incoming_text is None and existing:
+        display_content = existing["content"]
+        latest_content = existing["latest_content"]
+        preserved_content = existing_preserved_content
+        content_status = existing["content_status"] or "normal"
+        content_notice = existing["content_notice"]
+        preserved_raw_json = existing_preserved_raw
+    elif incoming_is_notice:
+        preserved_content = existing_preserved_content
+        display_content = preserved_content or incoming_text
+        latest_content = incoming_text
+        content_status = "deleted_notice"
+        content_notice = incoming_text
+        preserved_raw_json = existing_preserved_raw if preserved_content else None
+    else:
+        display_content = incoming_text
+        latest_content = incoming_text
+        preserved_content = incoming_text if incoming_text else existing_preserved_content
+        content_status = "normal"
+        content_notice = None
+        preserved_raw_json = raw_json if incoming_text else existing_preserved_raw
+
+    deleted = int(bool(floor.get("deleted")) or incoming_is_notice)
     conn.execute(
         """
         INSERT INTO floors (
-            floor_id, hole_id, ranking, reply_to, anonyname, content, time_created,
-            time_updated, deleted, like_count, dislike_count, raw_json, first_seen_at,
+            floor_id, hole_id, ranking, reply_to, anonyname, content, latest_content,
+            preserved_content, content_status, content_notice, time_created, time_updated,
+            deleted, like_count, dislike_count, raw_json, preserved_raw_json, first_seen_at,
             last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(floor_id) DO UPDATE SET
             hole_id=excluded.hole_id,
             ranking=excluded.ranking,
             reply_to=excluded.reply_to,
             anonyname=excluded.anonyname,
             content=excluded.content,
+            latest_content=excluded.latest_content,
+            preserved_content=excluded.preserved_content,
+            content_status=excluded.content_status,
+            content_notice=excluded.content_notice,
             time_created=excluded.time_created,
             time_updated=excluded.time_updated,
             deleted=excluded.deleted,
             like_count=excluded.like_count,
             dislike_count=excluded.dislike_count,
             raw_json=excluded.raw_json,
+            preserved_raw_json=excluded.preserved_raw_json,
             last_seen_at=excluded.last_seen_at
         """,
         (
@@ -421,13 +559,18 @@ def upsert_floor(conn: sqlite3.Connection, hole_id: int, floor: dict[str, Any], 
             parse_int(floor.get("ranking"), 0),
             parse_int(floor.get("reply_to"), 0),
             floor.get("anonyname"),
-            floor.get("content"),
+            display_content,
+            latest_content,
+            preserved_content,
+            content_status,
+            content_notice,
             floor.get("time_created"),
             floor.get("time_updated"),
-            int(bool(floor.get("deleted"))),
+            deleted,
             parse_int(floor.get("like"), 0),
             parse_int(floor.get("dislike"), 0),
-            json.dumps(floor, ensure_ascii=False, sort_keys=True),
+            raw_json,
+            preserved_raw_json,
             first_seen,
             now,
         ),
@@ -578,15 +721,130 @@ def extract_image_urls(content: str) -> list[str]:
     return [x.strip() for x in IMAGE_RE.findall(content or "") if x.strip()]
 
 
+def is_deleted_placeholder(value: Any) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    if text in DELETED_NOTICE_EXACT:
+        return True
+    if len(text) > 80 or not text.startswith("该内容"):
+        return False
+    return bool(
+        re.fullmatch(r"该内容(?:已|被)?作者删除", text)
+        or re.fullmatch(r"该内容因.{1,40}被删除", text)
+        or re.fullmatch(r"该内容.{0,20}(?:删除|审核中)", text)
+    )
+
+
+def hole_has_preservable_floor_content(floors: list[dict[str, Any]]) -> bool:
+    if not floors:
+        return True
+    for floor in floors:
+        if not isinstance(floor, dict):
+            continue
+        content = floor.get("content")
+        if content is not None and str(content).strip() and not is_deleted_placeholder(content):
+            return True
+    return False
+
+
+def stored_preserved_content(row: sqlite3.Row | None) -> str | None:
+    if row is None:
+        return None
+    keys = set(row.keys())
+    preserved = row["preserved_content"] if "preserved_content" in keys else None
+    if preserved and not is_deleted_placeholder(preserved):
+        return str(preserved)
+    content = row["content"] if "content" in keys else None
+    if content and not is_deleted_placeholder(content):
+        return str(content)
+    return None
+
+
+def floor_search_content(row: sqlite3.Row | None) -> str | None:
+    if row is None:
+        return None
+    content = stored_preserved_content(row)
+    if content:
+        return content
+    keys = set(row.keys())
+    latest = row["latest_content"] if "latest_content" in keys else None
+    if latest and not is_deleted_placeholder(latest):
+        return str(latest)
+    return None
+
+
 def build_search_text(hole: dict[str, Any], floors: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for tag in hole.get("tags") or []:
         if isinstance(tag, dict) and tag.get("name"):
             parts.append(str(tag["name"]))
     for floor in floors:
-        if isinstance(floor, dict) and floor.get("content"):
+        if isinstance(floor, dict) and floor.get("content") and not is_deleted_placeholder(floor.get("content")):
             parts.append(str(floor["content"]))
     return "\n".join(parts)
+
+
+def build_search_text_for_upsert(
+    conn: sqlite3.Connection,
+    hole_id: int,
+    hole: dict[str, Any],
+    floors: list[dict[str, Any]],
+) -> str:
+    parts: list[str] = []
+    for tag in hole.get("tags") or []:
+        if isinstance(tag, dict) and tag.get("name"):
+            parts.append(str(tag["name"]))
+
+    seen_floor_ids: set[int] = set()
+    for floor in floors:
+        if not isinstance(floor, dict):
+            continue
+        floor_id = parse_int(floor.get("floor_id") or floor.get("id"), -1)
+        if floor_id >= 0:
+            seen_floor_ids.add(floor_id)
+        content = floor.get("content")
+        if is_deleted_placeholder(content) and floor_id >= 0:
+            existing = conn.execute(
+                "SELECT * FROM floors WHERE floor_id = ?",
+                (floor_id,),
+            ).fetchone()
+            content = floor_search_content(existing)
+        if content and not is_deleted_placeholder(content):
+            parts.append(str(content))
+
+    existing_rows = conn.execute(
+        "SELECT * FROM floors WHERE hole_id = ? ORDER BY ranking ASC, floor_id ASC",
+        (hole_id,),
+    ).fetchall()
+    for row in existing_rows:
+        if row["floor_id"] in seen_floor_ids:
+            continue
+        content = floor_search_content(row)
+        if content:
+            parts.append(content)
+    return "\n".join(parts)
+
+
+def refresh_hole_search_text(conn: sqlite3.Connection, hole_id: int) -> None:
+    parts: list[str] = []
+    tag_rows = conn.execute(
+        "SELECT name FROM hole_tags WHERE hole_id = ? ORDER BY name",
+        (hole_id,),
+    ).fetchall()
+    parts.extend(str(row["name"]) for row in tag_rows if row["name"])
+    floor_rows = conn.execute(
+        "SELECT * FROM floors WHERE hole_id = ? ORDER BY ranking ASC, floor_id ASC",
+        (hole_id,),
+    ).fetchall()
+    for row in floor_rows:
+        content = floor_search_content(row)
+        if content:
+            parts.append(content)
+    conn.execute("UPDATE holes SET search_text = ? WHERE hole_id = ?", ("\n".join(parts), hole_id))
+    conn.commit()
 
 
 def _floors_from_hole(hole: dict[str, Any]) -> list[dict[str, Any]]:

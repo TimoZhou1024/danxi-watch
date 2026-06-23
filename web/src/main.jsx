@@ -105,10 +105,21 @@ function App() {
     if (!archive) return;
     const rawHole = archive.holes.find((item) => item.hole_id === holeId);
     const hole = importedSummary(rawHole, archive);
-    const floors = archive.floors.filter((item) => item.hole_id === holeId);
+    const imageByUrl = new Map((archive.images || []).map((image) => [image.url, image]));
+    const imageRefs = (archive.imageRefs || []).filter((ref) => ref.hole_id === holeId);
+    const images = imageRefs.map((ref) => ({ ...(imageByUrl.get(ref.url) || { url: ref.url }), floor_id: ref.floor_id }));
+    const imagesByFloor = new Map();
+    images.forEach((image) => {
+      if (image.floor_id === null || image.floor_id === undefined) return;
+      const list = imagesByFloor.get(image.floor_id) || [];
+      list.push(image);
+      imagesByFloor.set(image.floor_id, list);
+    });
+    const floors = archive.floors
+      .filter((item) => item.hole_id === holeId)
+      .map((floor) => ({ ...importedFloor(floor), images: imagesByFloor.get(floor.floor_id) || [] }));
     const tagsForHole = archive.tags.filter((item) => item.hole_id === holeId);
-    const images = archive.images.filter((item) => archive.imageRefs?.some((ref) => ref.url === item.url && ref.hole_id === holeId));
-    setSelected({ hole, floors: floors.map(importedFloor), tags: tagsForHole, images, raw: tryParseJson(rawHole?.raw_json) });
+    setSelected({ hole, floors, tags: tagsForHole, images, raw: tryParseJson(rawHole?.raw_json) });
   }
 
   async function handleImport(file) {
@@ -320,11 +331,35 @@ function HoleDetail({ detail, mode }) {
               <span>{formatTime(floor.time_created)}</span>
               <span>👍 {floor.like}</span>
             </div>
-            <p>{stripMarkdownImages(floor.content || "")}</p>
+            {floor.content_status === "deleted_notice" && (
+              <div className="content-notice">后续已删除：{floor.content_notice || floor.latest_content || "删除提示"}</div>
+            )}
+            <FloorContent floor={floor} mode={mode} />
           </section>
         ))}
       </div>
     </article>
+  );
+}
+
+function FloorContent({ floor, mode }) {
+  const parts = splitMarkdownContent(floor.content || "");
+  if (!parts.length) return <p className="floor-text muted">无内容</p>;
+  return (
+    <div className="floor-content">
+      {parts.map((part, index) => {
+        if (part.type === "text") {
+          return part.text ? <span className="floor-text" key={`${index}-text`}>{part.text}</span> : null;
+        }
+        const image = findFloorImage(floor.images || [], part.url);
+        const src = mode === "api" && image?.media_url ? image.media_url : part.url;
+        return (
+          <a className="inline-image" href={src} target="_blank" rel="noreferrer" key={`${index}-${part.url}`}>
+            <img src={src} alt={part.alt || ""} loading="lazy" />
+          </a>
+        );
+      })}
+    </div>
   );
 }
 
@@ -395,6 +430,10 @@ function importedFloor(floor) {
     reply_to: floor.reply_to,
     anonyname: floor.anonyname,
     content: floor.content,
+    latest_content: floor.latest_content,
+    preserved_content: floor.preserved_content,
+    content_status: floor.content_status || "normal",
+    content_notice: floor.content_notice,
     time_created: floor.time_created,
     time_updated: floor.time_updated,
     deleted: Boolean(floor.deleted),
@@ -456,8 +495,26 @@ function tryParseJson(value) {
   }
 }
 
-function stripMarkdownImages(value) {
-  return value.replace(/!\[[^\]]*\]\([^)]+\)/g, "[图片]");
+function splitMarkdownContent(value) {
+  const parts = [];
+  const imageRe = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = imageRe.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: "text", text: value.slice(lastIndex, match.index) });
+    }
+    parts.push({ type: "image", alt: match[1], url: match[2] });
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < value.length) {
+    parts.push({ type: "text", text: value.slice(lastIndex) });
+  }
+  return parts;
+}
+
+function findFloorImage(images, url) {
+  return images.find((image) => image.url === url) || null;
 }
 
 function formatTime(value) {
