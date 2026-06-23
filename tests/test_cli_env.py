@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
 import tempfile
 import unittest
@@ -7,6 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from danxi_daily import cli
+
+
+def make_jwt(exp: int) -> str:
+    def encode(payload: dict[str, object]) -> str:
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    return f"{encode({'alg': 'none'})}.{encode({'exp': exp})}.sig"
 
 
 class CliEnvTests(unittest.TestCase):
@@ -294,6 +304,42 @@ class CliEnvTests(unittest.TestCase):
 
         called_config = mock_run_pipeline.call_args[0][0]
         self.assertEqual(called_config.api_token, "auto-token")
+
+    @patch("danxi_daily.cli.run_pipeline", return_value={"ok": True})
+    def test_expiring_api_token_is_refreshed_before_pipeline(self, mock_run_pipeline) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".env").write_text(
+                f"DANXI_API_TOKEN={make_jwt(1)}\n"
+                "DANXI_WEBVPN_USERNAME=uid\n"
+                "DANXI_WEBVPN_PASSWORD=pwd\n",
+                encoding="utf-8",
+            )
+
+            old_cwd = os.getcwd()
+            os.chdir(root)
+            try:
+                with patch.dict(os.environ, {}, clear=True):
+                    argv = [
+                        "prog",
+                        "--base-urls",
+                        "https://forum.fduhole.com/api",
+                        "--webvpn-mode",
+                        "force",
+                    ]
+                    with patch("sys.argv", argv), patch(
+                        "danxi_daily.cli.WebVPNClient.obtain_forum_api_token", return_value="fresh-token"
+                    ):
+                        code = cli.main()
+                self.assertEqual(code, 0)
+            finally:
+                os.chdir(old_cwd)
+
+            env_text = (root / ".env").read_text(encoding="utf-8")
+            self.assertIn("DANXI_API_TOKEN=fresh-token", env_text)
+
+        called_config = mock_run_pipeline.call_args[0][0]
+        self.assertEqual(called_config.api_token, "fresh-token")
 
     @patch("danxi_daily.cli.run_pipeline", return_value={"ok": True})
     def test_cli_passes_schedule_config_to_pipeline(self, mock_run_pipeline) -> None:

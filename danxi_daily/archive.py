@@ -18,6 +18,7 @@ from typing import Any
 from .client import fetch_hole_floors, fetch_holes_with_fallback
 from .models import normalize_hole_id
 from .utils import ensure_parent, parse_int, parse_iso8601
+from .webvpn import WebVPNClient
 
 
 IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
@@ -46,6 +47,8 @@ class ArchiveConfig:
     floor_fetch_size: int = 80
     download_images: bool = True
     image_retry_limit: int = 3
+    webvpn_client: WebVPNClient | None = None
+    force_webvpn: bool = False
 
 
 def utc_now_iso() -> str:
@@ -335,6 +338,8 @@ def store_holes(
                 token=config.api_token,
                 size=config.floor_fetch_size,
                 timeout=config.timeout,
+                webvpn_client=config.webvpn_client,
+                force_webvpn=config.force_webvpn,
             )
             if fetched_floors:
                 floors = fetched_floors
@@ -383,6 +388,8 @@ def fetch_archive_holes(config: ArchiveConfig) -> tuple[list[dict[str, Any]], st
             division_id=config.division_id,
             token=config.api_token,
             timeout=config.timeout,
+            webvpn_client=config.webvpn_client,
+            force_webvpn=config.force_webvpn,
         )
         if not holes:
             break

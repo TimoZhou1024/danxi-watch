@@ -10,7 +10,8 @@ from pathlib import Path
 
 from .pipeline import PipelineConfig, run_pipeline
 from .security import normalize_allowed_hosts, require_https, validate_allowed_host
-from .webvpn import WebVPNAuthError, WebVPNClient, WebVPNCredentials, WebVPNError
+from .token_manager import maybe_refresh_api_token, refresh_api_token, should_retry_after_token_refresh, upsert_dotenv
+from .webvpn import WebVPNClient, WebVPNCredentials
 
 
 def _load_dotenv(path: Path) -> None:
@@ -59,25 +60,7 @@ def _hhmm_or_none(value: str) -> str | None:
 
 
 def _upsert_dotenv(path: Path, key: str, value: str) -> None:
-    lines: list[str] = []
-    if path.exists():
-        lines = path.read_text(encoding="utf-8").splitlines()
-
-    updated = False
-    for idx, line in enumerate(lines):
-        text = line.strip()
-        if not text or text.startswith("#") or "=" not in text:
-            continue
-        current_key = text.split("=", 1)[0].strip()
-        if current_key == key:
-            lines[idx] = f"{key}={value}"
-            updated = True
-            break
-
-    if not updated:
-        lines.append(f"{key}={value}")
-
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    upsert_dotenv(path, key, value)
 
 
 def _prepare_webvpn_client(
@@ -153,23 +136,12 @@ def _maybe_fill_api_token(
     webvpn_client: WebVPNClient | None,
     api_token: str | None,
 ) -> str | None:
-    if api_token or webvpn_client is None:
-        return api_token
-
-    try:
-        new_token = webvpn_client.obtain_forum_api_token()
-    except (WebVPNAuthError, WebVPNError):
-        return api_token
-
-    if not isinstance(new_token, str) or not new_token.strip():
-        return api_token
-
-    normalized_token = new_token.strip()
-
-    if _should_persist_secrets(args):
-        _upsert_dotenv(env_path, "DANXI_API_TOKEN", normalized_token)
-        os.environ.setdefault("DANXI_API_TOKEN", normalized_token)
-    return normalized_token
+    return maybe_refresh_api_token(
+        api_token,
+        webvpn_client,
+        env_path=env_path,
+        persist=_should_persist_secrets(args),
+    )
 
 
 def _refresh_api_token(
@@ -177,21 +149,11 @@ def _refresh_api_token(
     env_path: Path,
     webvpn_client: WebVPNClient | None,
 ) -> str | None:
-    if webvpn_client is None:
-        return None
-    try:
-        refreshed = webvpn_client.obtain_forum_api_token()
-    except (WebVPNAuthError, WebVPNError):
-        return None
-
-    if not isinstance(refreshed, str) or not refreshed.strip():
-        return None
-
-    token = refreshed.strip()
-    if _should_persist_secrets(args):
-        _upsert_dotenv(env_path, "DANXI_API_TOKEN", token)
-        os.environ.setdefault("DANXI_API_TOKEN", token)
-    return token
+    return refresh_api_token(
+        webvpn_client,
+        env_path=env_path,
+        persist=_should_persist_secrets(args),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -415,9 +377,9 @@ def main() -> int:
 
     try:
         result = run_pipeline(config)
-    except RuntimeError:
+    except RuntimeError as exc:
         refreshed_token = _refresh_api_token(args, env_path, config.webvpn_client)
-        if refreshed_token and refreshed_token != config.api_token:
+        if should_retry_after_token_refresh(exc, config.api_token, refreshed_token):
             config.api_token = refreshed_token
             # Also update post_token: same session token used for both reading and posting.
             config.post_token = refreshed_token
