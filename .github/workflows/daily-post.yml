@@ -5,6 +5,11 @@ permissions:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/daily-post.yml"
 
 jobs:
   dry-run:

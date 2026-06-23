@@ -7,6 +7,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "*/30 * * * *"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/archive-export.yml"
 
 concurrency:
   group: danxi-watch-archive-export
