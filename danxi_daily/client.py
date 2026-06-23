@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
+import ssl
 
 from .security import sanitize_url_for_log
 from .webvpn import WebVPNAuthError, WebVPNClient, WebVPNError
@@ -23,7 +24,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         )
 
 
-_SAFE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+# DanXi server (10.107.13.152) doesn't support TLS 1.3.
+_DANXI_SSL_CTX = ssl.create_default_context()
+_DANXI_SSL_CTX.maximum_version = ssl.TLSVersion.TLSv1_2
+
+_SAFE_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    _NoRedirect(),
+    urllib.request.HTTPSHandler(context=_DANXI_SSL_CTX)
+)
 
 
 def _headers(token: str | None) -> dict[str, str]:
