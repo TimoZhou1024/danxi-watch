@@ -1,0 +1,98 @@
+name: DanXi Watch Archive Export
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+concurrency:
+  group: danxi-watch-archive-export
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets
+        env:
+          DANXI_WEBVPN_USERNAME: ${{ secrets.DANXI_WEBVPN_USERNAME }}
+          DANXI_WEBVPN_PASSWORD: ${{ secrets.DANXI_WEBVPN_PASSWORD }}
+        run: |
+          if [ -z "$DANXI_WEBVPN_USERNAME" ] || [ -z "$DANXI_WEBVPN_PASSWORD" ]; then
+            echo "::error::Missing required secrets: DANXI_WEBVPN_USERNAME or DANXI_WEBVPN_PASSWORD"
+            exit 1
+          fi
+
+      - name: Run archive
+        env:
+          TZ: Asia/Shanghai
+          DANXI_API_TOKEN: ${{ secrets.DANXI_API_TOKEN }}
+          DANXI_WEBVPN_USERNAME: ${{ secrets.DANXI_WEBVPN_USERNAME }}
+          DANXI_WEBVPN_PASSWORD: ${{ secrets.DANXI_WEBVPN_PASSWORD }}
+          DANXI_ARCHIVE_OUTPUTS: "false"
+        run: |
+          python scripts/archive_danxi.py \
+            --hours 24 \
+            --base-urls "https://forum.fduhole.com/api" \
+            --webvpn-mode force \
+            --webvpn-no-prompt
+
+      - name: Export browser package
+        run: |
+          python scripts/export_pages_data.py \
+            --db data/danxi.sqlite \
+            --out exports/danxi-export.zip
+
+      - name: Build run summary
+        run: |
+          python - <<'PY'
+          import json, sqlite3
+          from pathlib import Path
+          db = Path("data/danxi.sqlite")
+          conn = sqlite3.connect(db)
+          holes = conn.execute("SELECT COUNT(*) FROM holes").fetchone()[0]
+          floors = conn.execute("SELECT COUNT(*) FROM floors").fetchone()[0]
+          images = conn.execute("SELECT COUNT(*) FROM images WHERE status='downloaded'").fetchone()[0]
+          failed = conn.execute("SELECT COUNT(*) FROM images WHERE status='failed'").fetchone()[0]
+          conn.close()
+          summary = {
+              "holes": holes,
+              "floors": floors,
+              "downloaded_images": images,
+              "failed_images": failed,
+              "export": "exports/danxi-export.zip",
+          }
+          print(json.dumps(summary, ensure_ascii=False, indent=2))
+          with open("archive-summary.json", "w", encoding="utf-8") as f:
+              json.dump(summary, f, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Upload archive export
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: danxi-watch-archive-export
+          path: |
+            exports/danxi-export.zip
+            archive-summary.json
+          if-no-files-found: error

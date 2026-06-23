@@ -103,6 +103,26 @@ select {
   color: #9a4f00;
 }
 
+.import-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #dde1e7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.import-hint strong {
+  font-size: 14px;
+}
+
+.import-hint span {
+  color: #68717d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .workspace {
   min-width: 0;
   padding: 16px;

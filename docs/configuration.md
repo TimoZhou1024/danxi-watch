@@ -23,6 +23,7 @@ Configuration priority is:
 
 - DANXI_API_TOKEN
   - Optional for read requests, required on some deployments.
+  - When WebVPN credentials are available, the tool can refresh this token automatically for the current run.
 
 - DANXI_LLM_PROVIDER
   - auto | openai | anthropic | none
@@ -61,9 +62,20 @@ Configuration priority is:
   - JSON cache path for floor prefetch data.
   - Default: outputs/floors_cache.json
 
+- DANXI_WEBVPN_MODE
+  - auto | off | force
+  - Default: auto
+
+- DANXI_WEBVPN_USERNAME
+  - Optional locally, required for GitHub Actions independent archive mode.
+
+- DANXI_WEBVPN_PASSWORD
+  - Optional locally, required for GitHub Actions independent archive mode.
+
 Token policy:
 - Use environment variables only.
 - Do not pass tokens in command line arguments.
+- In GitHub Actions, refreshed tokens only live for that workflow run unless you manage persistence outside Actions secrets.
 
 ## Core CLI Examples
 
@@ -94,3 +106,7 @@ python scripts/generate_daily.py --no-archive-outputs
 Trusted local development override:
 
 python scripts/generate_daily.py --unsafe-allow-any-host
+
+Independent archive run through WebVPN:
+
+python scripts/archive_danxi.py --hours 24 --base-urls "https://forum.fduhole.com/api" --webvpn-mode force

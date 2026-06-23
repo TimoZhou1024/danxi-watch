@@ -73,7 +73,7 @@ function App() {
     } catch {
       setMode((current) => (archive ? current : "import"));
       if (!archive) {
-        setMessage("本地 API 未连接。可以启动本地服务，或导入导出的数据包。");
+        setMessage("当前是静态浏览模式。若未启动本地 API，请导入归档导出包；GitHub Pages 默认不会公开完整数据。");
       }
     }
   }
@@ -156,6 +156,7 @@ function App() {
         </div>
         <StatsPanel stats={stats} />
         <ImportPanel loading={loading} onImport={handleImport} />
+        {mode === "import" && !archive && <ImportHint />}
         {message && (
           <div className="notice">
             <AlertCircle size={16} />
@@ -210,6 +211,15 @@ function ImportPanel({ loading, onImport }) {
       <span>{loading ? "处理中" : "导入数据包"}</span>
       <input type="file" accept=".zip" onChange={(event) => onImport(event.target.files?.[0])} />
     </label>
+  );
+}
+
+function ImportHint() {
+  return (
+    <div className="import-hint">
+      <strong>导入私有归档包</strong>
+      <span>本地 API 适合完整浏览；静态托管页面默认只提供前端和本地缓存，不直接公开完整备份。</span>
+    </div>
   );
 }
 

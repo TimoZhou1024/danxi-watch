@@ -65,6 +65,35 @@ Behavior:
 - Uploads `outputs/daily.md`, `outputs/ranked.json`, `outputs/holes.raw.json` as artifacts
 - Only runs on the repository default branch (manual runs on other branches are skipped)
 
+## Option E: GitHub Actions Archive Export (independent runtime)
+
+Workflow file:
+
+`.github/workflows/archive-export.yml`
+
+Schedule:
+
+- Every 30 minutes by default
+- Can also be triggered manually with `workflow_dispatch`
+
+Required repository secrets:
+
+- `DANXI_WEBVPN_USERNAME`
+- `DANXI_WEBVPN_PASSWORD`
+- `DANXI_API_TOKEN` (optional)
+
+Behavior:
+
+- Runs `scripts/archive_danxi.py` with `--webvpn-mode force`
+- Refreshes expired DanXi API token automatically when WebVPN login succeeds
+- Builds a private browser-importable export package with `scripts/export_pages_data.py`
+- Uploads `exports/danxi-export.zip` and `archive-summary.json` as workflow artifacts
+
+Important limitation:
+
+- This removes the dependency on your own PC and local campus network
+- It still depends on Fudan WebVPN and upstream DanXi services being reachable from GitHub Actions
+
 ## Recommended Safety
 
 - Keep posting disabled in scheduled runs unless fully verified.

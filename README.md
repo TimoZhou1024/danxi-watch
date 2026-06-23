@@ -57,6 +57,22 @@ This project now includes a local archive and viewer path:
 
 See `docs/archive_viewer.md` for details.
 
+## Independent Runtime
+
+You do not need to keep this project running on your own PC or on campus Wi-Fi.
+The recommended setup is:
+
+- Use GitHub Actions to run `scripts/archive_danxi.py` on a schedule
+- Authenticate through WebVPN with repository secrets
+- Export a private zip package as an Actions artifact
+- Keep GitHub Pages as a static frontend only, then import the zip package in the browser
+
+Important limitation:
+
+- This removes the dependency on your own machine and local campus network
+- It does not remove the dependency on Fudan WebVPN and valid Fudan credentials
+- If WebVPN or the upstream DanXi services are unavailable from GitHub Actions, the archive job will fail until the next retry
+
 ---
 
 Original upstream README content follows for reference.
