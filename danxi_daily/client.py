@@ -122,9 +122,7 @@ def fetch_holes_with_fallback(
             "offset": offset,
             "division_id": division_id,
         }
-        prefer_webvpn = webvpn_client is not None and (force_webvpn or should_prefer_webvpn(clean_base))
-
-        if prefer_webvpn:
+        if force_webvpn:
             try:
                 webvpn_params = _normalize_webvpn_params(params)
                 payload = webvpn_client.request_json(url, params=webvpn_params, token=token, timeout=timeout)
@@ -140,12 +138,8 @@ def fetch_holes_with_fallback(
                 json.JSONDecodeError,
             ) as exc:
                 errors.append(f"{sanitize_url_for_log(clean_base)} via webvpn: {exc}")
-                if force_webvpn:
-                    continue
-
-        if force_webvpn:
             continue
-
+        # Auto mode: try direct API first, fall back to WebVPN.
         try:
             payload = _request_json(url, params=params, token=token, timeout=timeout)
             items = _extract_items(payload)

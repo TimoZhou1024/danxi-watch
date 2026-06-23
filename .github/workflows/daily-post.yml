@@ -52,7 +52,7 @@ jobs:
             --hours 24 \
             --top 12 \
             --base-urls "https://forum.fduhole.com/api" \
-            --webvpn-mode force \
+            --webvpn-mode auto \
             --webvpn-no-prompt \
             --no-archive-outputs \
             --verbose

@@ -59,7 +59,7 @@ jobs:
           python scripts/archive_danxi.py \
             --hours 24 \
             --base-urls "https://forum.fduhole.com/api" \
-            --webvpn-mode force \
+            --webvpn-mode auto \
             --webvpn-no-prompt
 
       - name: Export browser package
